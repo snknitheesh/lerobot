@@ -33,6 +33,19 @@ logger = logging.getLogger(__name__)
 EE_FRAME = "gripper_tip"
 
 
+class SimplePID:
+    def __init__(self, kp, ki, kd):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.prev_error = 0
+        self.integral = 0
+
+    def step(self, error, dt):
+        self.integral += error * dt
+        derivative = (error - self.prev_error) / dt if dt > 0 else 0
+        output = self.kp * error + self.ki * self.integral + self.kd * derivative
+        self.prev_error = error
+        return output
+
 class SO100FollowerEndEffector(SO100Follower):
     """
     SO100Follower robot with end-effector space control.
@@ -46,6 +59,10 @@ class SO100FollowerEndEffector(SO100Follower):
 
     def __init__(self, config: SO100FollowerEndEffectorConfig):
         super().__init__(config)
+        self.pid_x = SimplePID(0.5, 0.01, 0.05)
+        self.pid_y = SimplePID(0.5, 0.01, 0.05)
+        self.pid_z = SimplePID(0.5, 0.01, 0.05)
+        self.last_time = time.time()
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
