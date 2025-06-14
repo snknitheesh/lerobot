@@ -143,6 +143,12 @@ class SO100FollowerEndEffector(SO100Follower):
                 if "gripper" not in action:
                     action["gripper"] = [1.0]
                 action = np.append(delta_ee, action["gripper"])
+                print(
+                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
+                )
+                logger.warning(
+                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
+                )
             else:
                 logger.warning(
                     f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
