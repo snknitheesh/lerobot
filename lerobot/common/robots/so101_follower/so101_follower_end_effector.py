@@ -71,7 +71,7 @@ class SO101FollowerEndEffector(SO101Follower):
                 "elbow_flex": Motor(3, "sts3215", MotorNormMode.DEGREES),
                 "wrist_flex": Motor(4, "sts3215", MotorNormMode.DEGREES),
                 "wrist_roll": Motor(5, "sts3215", MotorNormMode.DEGREES),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_101),
+                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
@@ -112,11 +112,16 @@ class SO101FollowerEndEffector(SO101Follower):
         Returns:
             The joint-space action that was sent to the motors
         """
-
+        print("ACTION RECEIVED:", action)
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        pid_flag = False
+        joint_keys = [f"{k}.pos" for k in self.bus.motors.keys()]
+        if all(k in action for k in joint_keys):
+            # Optionally: update current_joint_pos and current_ee_pos
+            self.current_joint_pos = np.array([action[k] for k in joint_keys])
+            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos, frame=EE_FRAME)
+            return super().send_action(action)
+        pid_flag = True
         # PID smoothing
         if pid_flag:
             now = time.time()
@@ -143,12 +148,6 @@ class SO101FollowerEndEffector(SO101Follower):
                 if "gripper" not in action:
                     action["gripper"] = [1.0]
                 action = np.append(delta_ee, action["gripper"])
-                print(
-                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
-                )
-                logger.warning(
-                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
-                )
             else:
                 logger.warning(
                     f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
@@ -167,9 +166,10 @@ class SO101FollowerEndEffector(SO101Follower):
         # Set desired end-effector position by adding delta
         desired_ee_pos = np.eye(4)
         desired_ee_pos[:3, :3] = self.current_ee_pos[:3, :3]  # Keep orientation
-
+        
         # Add delta to position and clip to bounds
         desired_ee_pos[:3, 3] = self.current_ee_pos[:3, 3] + action[:3]
+        print(desired_ee_pos)
         if self.end_effector_bounds is not None:
             desired_ee_pos[:3, 3] = np.clip(
                 desired_ee_pos[:3, 3],
