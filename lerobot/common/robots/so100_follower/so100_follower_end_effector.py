@@ -116,6 +116,19 @@ class SO100FollowerEndEffector(SO100Follower):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        pid_flag = False
+        # PID smoothing
+        if pid_flag:
+            now = time.time()
+            dt = now - self.last_time if hasattr(self, "last_time") else 0.05
+            self.last_time = now
+
+            if isinstance(action, dict) and all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
+                # Apply PID to each axis
+                action["delta_x"] = self.pid_x.step(action["delta_x"], dt)
+                action["delta_y"] = self.pid_y.step(action["delta_y"], dt)
+                action["delta_z"] = self.pid_z.step(action["delta_z"], dt)
+        
         # Convert action to numpy array if not already
         if isinstance(action, dict):
             if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
