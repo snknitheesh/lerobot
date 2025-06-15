@@ -359,6 +359,10 @@ class OpenCVCamera(Camera):
 
         if c != 3:
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
+        
+        # Store original dimensions before processing
+        self.width = w
+        self.height = h
 
         # Apply cropping if configured
         if self.config.crop_region is not None:
