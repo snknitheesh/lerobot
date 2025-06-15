@@ -360,6 +360,16 @@ class OpenCVCamera(Camera):
         if c != 3:
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
 
+        # Apply cropping if configured
+        if self.config.crop_region is not None:
+            x, y, crop_w, crop_h = self.config.crop_region
+            if x + crop_w <= w and y + crop_h <= h:
+                image = image[y:y+crop_h, x:x+crop_w]
+            else:
+                raise RuntimeError(
+                    f"Crop region {self.config.crop_region} exceeds image dimensions {(h, w)}"
+                )
+
         processed_image = image
         if requested_color_mode == ColorMode.RGB:
             processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
