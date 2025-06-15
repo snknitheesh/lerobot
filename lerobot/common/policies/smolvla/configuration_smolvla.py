@@ -26,9 +26,9 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 @dataclass
 class SmolVLAConfig(PreTrainedConfig):
     # Input / output structure.
-    n_obs_steps: int = 1
+    n_obs_steps: int = 10
     chunk_size: int = 50
-    n_action_steps: int = 50
+    n_action_steps: int = 100
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {

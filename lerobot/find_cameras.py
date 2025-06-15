@@ -170,7 +170,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
             rs_config = RealSenseCameraConfig(
-                serial_number_or_name=cam_id,
+                serial_number_or_name="242422304859",
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)

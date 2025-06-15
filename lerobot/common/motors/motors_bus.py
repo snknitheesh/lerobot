@@ -1055,7 +1055,7 @@ class MotorsBus(abc.ABC):
         motors: str | list[str] | None = None,
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = 10,
     ) -> dict[str, Value]:
         """Read the same register from several motors at once.
 

@@ -16,7 +16,17 @@
 
 import logging
 import time
+import threading
 from typing import Any
+import pyrealsense2 as rs
+import mediapipe as mp
+import cv2
+import datetime as dt
+import pyrealsense2 as rs
+import mediapipe as mp
+import cv2
+import numpy as np
+import datetime as dt
 
 import numpy as np
 
@@ -62,6 +72,10 @@ class SO101FollowerEndEffector(SO101Follower):
         self.pid_x = SimplePID(0.5, 0.01, 0.05)
         self.pid_y = SimplePID(0.5, 0.01, 0.05)
         self.pid_z = SimplePID(0.5, 0.01, 0.05)
+        self._hand_action = None
+        self._hand_tracking_thread = None
+        self._hand_tracking_running = False
+        self._hand_action_lock = threading.Lock()
         self.last_time = time.time()
         self.bus = FeetechMotorsBus(
             port=self.config.port,
@@ -100,7 +114,158 @@ class SO101FollowerEndEffector(SO101Follower):
             "shape": (4,),
             "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
         }
+        
+    def _hand_tracking_loop(self):
+        # ...copy your hand tracking code here, but replace self.send_action(action) with:
+        # with self._hand_action_lock:
+        #     self._hand_action = action
+        # And use self._hand_tracking_running as the loop condition.
+        
 
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        org = (20, 100)
+        fontScale = .5
+        color = (0, 150, 255)
+        thickness = 1
+
+        realsense_ctx = rs.context()
+        connected_devices = []
+        for i in range(len(realsense_ctx.devices)):
+            detected_camera = realsense_ctx.devices[i].get_info(rs.camera_info.serial_number)
+            print(f"{detected_camera}")
+            connected_devices.append(detected_camera)
+        device = connected_devices[0]
+        pipeline = rs.pipeline()
+        config = rs.config()
+        background_removed_color = 153  # Grey
+
+        mpHands = mp.solutions.hands
+        hands = mpHands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.7)
+        mpDraw = mp.solutions.drawing_utils
+
+        config.enable_device(device)
+        stream_res_x = 640
+        stream_res_y = 480
+        stream_fps = 30
+        config.enable_stream(rs.stream.depth, stream_res_x, stream_res_y, rs.format.z16, stream_fps)
+        config.enable_stream(rs.stream.color, stream_res_x, stream_res_y, rs.format.bgr8, stream_fps)
+        profile = pipeline.start(config)
+        align_to = rs.stream.color
+        align = rs.align(align_to)
+
+        depth_sensor = profile.get_device().first_depth_sensor()
+        depth_scale = depth_sensor.get_depth_scale()
+        clipping_distance_in_meters = 2
+        clipping_distance = clipping_distance_in_meters / depth_scale
+
+        def get_3d_point(lm, depth_image, width, height, depth_scale):
+            x = int(lm.x * width)
+            y = int(lm.y * height)
+            if x >= width: x = width - 1
+            if y >= height: y = height - 1
+            depth = depth_image[y, x] * depth_scale
+            return np.array([x, y, depth])
+
+        while self._hand_tracking_running:
+            frames = pipeline.wait_for_frames()
+            aligned_frames = align.process(frames)
+            aligned_depth_frame = aligned_frames.get_depth_frame()
+            color_frame = aligned_frames.get_color_frame()
+            if not aligned_depth_frame or not color_frame:
+                continue
+
+            depth_image = np.asanyarray(aligned_depth_frame.get_data())
+            depth_image_flipped = cv2.flip(depth_image, 1)
+            color_image = np.asanyarray(color_frame.get_data())
+            color_image = cv2.flip(color_image, 1)
+            images = np.where(
+                (np.dstack((depth_image_flipped,)*3) > clipping_distance) | (np.dstack((depth_image_flipped,)*3) <= 0),
+                background_removed_color,
+                color_image
+            )
+            color_images_rgb = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+            results = hands.process(color_images_rgb)
+
+            if results.multi_hand_landmarks and results.multi_handedness:
+                for i, (handLms, handedness) in enumerate(zip(results.multi_hand_landmarks, results.multi_handedness)):
+                    hand_label = handedness.classification[0].label
+                    width, height = color_image.shape[1], color_image.shape[0]
+                    action = {
+                        "delta_x": 0.0,
+                        "delta_y": 0.0,
+                        "delta_z": 0.0,
+                        "gripper": 0.0,
+                        "wrist_roll": 0.0,  # Placeholder for wrist roll
+                    }
+                    if hand_label == "Right":
+                        thumb_tip = handLms.landmark[4]
+                        finger_tips = [handLms.landmark[8], handLms.landmark[12], handLms.landmark[16], handLms.landmark[20]]
+                        finger_names = ["Index", "Middle", "Ring", "Pinky"]
+
+                        thumb_vec = np.array([thumb_tip.x, thumb_tip.y, thumb_tip.z])
+                        angles = []
+                        for tip, name in zip(finger_tips, finger_names):
+                            finger_vec = np.array([tip.x, tip.y, tip.z])
+                            v1 = thumb_vec
+                            v2 = finger_vec
+                            dot = np.dot(v1, v2)
+                            norm1 = np.linalg.norm(v1)
+                            norm2 = np.linalg.norm(v2)
+                            if norm1 > 0 and norm2 > 0:
+                                angle_rad = np.arccos(np.clip(dot / (norm1 * norm2), -1.0, 1.0))
+                                angle_deg = np.degrees(angle_rad)
+                                angles.append((name, angle_deg))
+                            else:
+                                angles.append((name, None))
+                        middle_knuckle = handLms.landmark[9]
+                        hand_3d = get_3d_point(middle_knuckle, depth_image_flipped, width, height, depth_scale)
+                        cam_center = np.array([width // 2, height // 2, depth_image_flipped[height // 2, width // 2] * depth_scale])
+                        axis_x = hand_3d[0] - cam_center[0]
+                        axis_y = (hand_3d[2] / depth_scale) - (cam_center[2] / depth_scale)
+                        axis_z = hand_3d[1] - cam_center[1]
+                        action["gripper"] = angles[0][1] if angles and angles[0][1] is not None else 0.0
+                        
+                    if hand_label== "Left":
+                        wrist = handLms.landmark[0]
+                        index_base = handLms.landmark[5]
+                        pinky_base = handLms.landmark[17]
+                        # Vector from wrist to index base and wrist to pinky base
+                        v1 = np.array([index_base.x - wrist.x, index_base.y - wrist.y])
+                        v2 = np.array([pinky_base.x - wrist.x, pinky_base.y - wrist.y])
+                        # Angle between v1 and horizontal axis (x axis)
+                        angle_rad = np.arctan2(v1[1], v1[0])
+                        angle_deg = np.degrees(angle_rad)
+                        action["wrist_roll"] =  angle_deg
+                        
+                    with self._hand_action_lock:
+                        self._hand_action = action
+            # Optionally show the window for debug
+            cv2.imshow("Hand Tracking", images)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        pipeline.stop()
+        print("Hand tracking stopped.")
+    
+    def start_hand_tracking(self):
+        """Start hand tracking in a background thread."""
+        if self._hand_tracking_thread is None or not self._hand_tracking_thread.is_alive():
+            self._hand_tracking_running = True
+            self._hand_tracking_thread = threading.Thread(target=self._hand_tracking_loop, daemon=True)
+            self._hand_tracking_thread.start()
+            
+    def get_hand_action(self):
+        """Get the latest hand action (thread-safe)."""
+        with self._hand_action_lock:
+            return self._hand_action.copy() if self._hand_action else None
+
+    def stop_hand_tracking(self):
+        """Stop the hand tracking thread."""
+        self._hand_tracking_running = False
+        if self._hand_tracking_thread is not None:
+            self._hand_tracking_thread.join(timeout=2)
+            self._hand_tracking_thread = None
+        
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Transform action from end-effector space to joint space and send to motors.
@@ -116,11 +281,40 @@ class SO101FollowerEndEffector(SO101Follower):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         joint_keys = [f"{k}.pos" for k in self.bus.motors.keys()]
+        print("JOINT KEYS:", joint_keys)
         if all(k in action for k in joint_keys):
+            self.start_hand_tracking()
+            
+            shadow_action = self.get_hand_action()
+            print("Hand action received:", shadow_action)
+            
+            
             # Optionally: update current_joint_pos and current_ee_pos
             self.current_joint_pos = np.array([action[k] for k in joint_keys])
             self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos, frame=EE_FRAME)
+            if shadow_action:
+                gripper_angle = shadow_action["gripper"]
+                min_angle_1 = 5.0   
+                max_angle_1 = 20.0  
+                gripper_min_1 = 5  
+                gripper_max_1 = 70  
+                gripper_angle = np.clip(gripper_angle, min_angle_1, max_angle_1)
+                gripper_mapped = gripper_min_1 + (gripper_angle - min_angle_1) * (gripper_max_1 - gripper_min_1) / (max_angle_1 - min_angle_1)
+                gripper_mapped = np.clip(gripper_mapped, gripper_min_1, gripper_max_1)
+                action['gripper.pos'] = gripper_mapped
+                print("Action after changing")
+                print(action)
+                min_angle = -140.0  
+                max_angle = -10.0  
+                gripper_min = 10  
+                gripper_max = 90 
+                wrist_roll_angle = shadow_action["wrist_roll"]
+                wrist_roll_angle = np.clip(wrist_roll_angle, min_angle, max_angle)
+                wrist_roll_mapped = gripper_min + abs(wrist_roll_angle - min_angle) * (gripper_max - gripper_min) / (max_angle - min_angle)
+                wrist_roll_mapped = np.clip(wrist_roll_mapped, gripper_min, gripper_max)
+                action['wrist_roll.pos'] = wrist_roll_angle
             return super().send_action(action)
+        
         pid_flag = True
         # PID smoothing
         if pid_flag:
@@ -169,7 +363,9 @@ class SO101FollowerEndEffector(SO101Follower):
         
         # Add delta to position and clip to bounds
         desired_ee_pos[:3, 3] = self.current_ee_pos[:3, 3] + action[:3]
+        print("Desired end-effector position:")
         print(desired_ee_pos)
+        print(type(desired_ee_pos))
         if self.end_effector_bounds is not None:
             desired_ee_pos[:3, 3] = np.clip(
                 desired_ee_pos[:3, 3],
@@ -187,6 +383,7 @@ class SO101FollowerEndEffector(SO101Follower):
         joint_action = {
             f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
         }
+        
 
         # Handle gripper separately if included in action
         # Gripper delta action is in the range 0 - 2,
@@ -202,7 +399,7 @@ class SO101FollowerEndEffector(SO101Follower):
         self.current_joint_pos[-1] = joint_action["gripper.pos"]
 
         # Send joint space action to parent class
-        return super().send_action(joint_action)
+        # return super().send_action(joint_action)
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
