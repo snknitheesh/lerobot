@@ -204,6 +204,133 @@ class SO101FollowerEndEffector(SO101Follower):
 
                         thumb_vec = np.array([thumb_tip.x, thumb_tip.y, thumb_tip.z])
                         angles = []
+                        thumb_tip = handLms.landmark[4]
+                finger_tips = [handLms.landmark[8], handLms.landmark[12], handLms.landmark[16], handLms.landmark[20]]
+                finger_names = ["Index", "Middle", "Ring", "Pinky"]
+
+                thumb_vec = np.array([thumb_tip.x, thumb_tip.y, thumb_tip.z])
+                angles = []
+                for tip, name in zip(finger_tips, finger_names):
+                    finger_vec = np.array([tip.x, tip.y, tip.z])
+                    v1 = thumb_vec
+                    v2 = finger_vec
+                    dot = np.dot(v1, v2)
+                    norm1 = np.linalg.norm(v1)
+                    norm2 = np.linalg.norm(v2)
+                    if norm1 > 0 and norm2 > 0:
+                        angle_rad = np.arccos(np.clip(dot / (norm1 * norm2), -1.0, 1.0))
+                        angle_deg = np.degrees(angle_rad)
+                        angles.append((name, angle_deg))
+                    else:
+                        angles.append((name, None))
+
+                    # 2) Camera center as origin, right=+y, up=+z, forward=+x
+                    # Use middle finger knuckle (landmark 9) as hand position
+                    middle_knuckle = handLms.landmark[9]
+                    hand_3d = get_3d_point(middle_knuckle, depth_image_flipped, width, height, depth_scale)
+                    # Camera center
+                    cam_center = np.array([width // 2, height // 2, depth_image_flipped[height // 2, width // 2] * depth_scale])
+                    # Axis mapping (all in pixels):
+                    # x: right/left (horizontal movement)
+                    # y: forward/back (depth, in pixels)
+                    # z: up/down (vertical movement)
+                    axis_x = hand_3d[0] - cam_center[0]  # right/left (pixels)
+                    axis_y = (hand_3d[2] / depth_scale) - (cam_center[2] / depth_scale)  # forward/back (pixels)
+                    axis_z = hand_3d[1] - cam_center[1]  # up/down (pixels)
+
+                    # --- Distance from camera for tip of index, middle, ring ---
+                    tip_indices = [8, 12, 16]
+                    tip_names = ["Index", "Middle", "Ring"]
+                    tip_distances = []
+                    for idx, name in zip(tip_indices, tip_names):
+                        tip_lm = handLms.landmark[idx]
+                        tip_x = int(tip_lm.x * width)
+                        tip_y = int(tip_lm.y * height)
+                        tip_x = min(max(tip_x, 0), width - 1)
+                        tip_y = min(max(tip_y, 0), height - 1)
+                        tip_depth = depth_image_flipped[tip_y, tip_x]
+                        # If depth is zero, try to search a small window around for a valid value
+                        if tip_depth == 0:
+                            window = 5  # pixels
+                            found = False
+                            for dx in range(-window, window+1):
+                                for dy in range(-window, window+1):
+                                    nx, ny = tip_x + dx, tip_y + dy
+                                    if 0 <= nx < width and 0 <= ny < height:
+                                        val = depth_image_flipped[ny, nx]
+                                        if val > 0:
+                                            tip_depth = val
+                                            found = True
+                                            break
+                                if found:
+                                    break
+                        tip_distances.append((name, tip_depth))
+
+                    right_hand_info = f"Right Hand:\n"
+                    for name, angle in angles:
+                        if angle is not None:
+                            right_hand_info += f"Angle Thumb-{name}: {angle:.1f} deg\n"
+                        else:
+                            right_hand_info += f"Angle Thumb-{name}: N/A\n"
+                    right_hand_info += f"Move: X={axis_x}, Y={axis_y:.0f}, Z={axis_z}\n"
+                    for name, dist in tip_distances:
+                        right_hand_info += f"{name} Tip Distance: {dist} px\n"
+
+                    wrist = handLms.landmark[0]
+                    index_base = handLms.landmark[5]
+                    pinky_base = handLms.landmark[17]
+                    # Vector from wrist to index base and wrist to pinky base
+                    v1 = np.array([index_base.x - wrist.x, index_base.y - wrist.y])
+                    v2 = np.array([pinky_base.x - wrist.x, pinky_base.y - wrist.y])
+                    # Angle between v1 and horizontal axis (x axis)
+                    wrist_angle_rad = np.arctan2(v1[1], v1[0])
+                    wrist_angle_deg = np.degrees(wrist_angle_rad)
+                    # Normalize angle to [0, 360)
+                    if wrist_angle_deg < 0:
+                        wrist_angle_deg += 360
+
+                    right_hand_info += f"Wrist Roll: {wrist_angle_deg:.1f} deg\n"
+
+                    # Draw
+                    mpDraw.draw_landmarks(images, handLms, mpHands.HAND_CONNECTIONS)
+                    images = cv2.putText(
+                        images, f"Right: X={axis_x} Y={axis_y:.0f} Z={axis_z}", (20, org[1]+20),
+                        font, fontScale, color, thickness, cv2.LINE_AA
+                    )
+                    for idx, (name, angle) in enumerate(angles):
+                        images = cv2.putText(
+                            images, f"{name}: {angle:.1f} deg" if angle is not None else f"{name}: N/A",
+                            (20, org[1]+40+idx*20), font, fontScale, color, thickness, cv2.LINE_AA
+                        )
+                    # Display tip distances
+                    for idx, (name, dist) in enumerate(tip_distances):
+                        images = cv2.putText(
+                            images, f"{name} Tip Dist: {dist} px",
+                            (20, org[1]+130+idx*20), font, fontScale, color, thickness, cv2.LINE_AA
+                        )
+                    # Display wrist roll
+                    images = cv2.putText(
+                        images, f"Wrist Roll: {wrist_angle_deg:.1f} deg",
+                        (20, org[1]+200), font, fontScale, color, thickness, cv2.LINE_AA
+                    )
+                    
+                    # Draw
+                    mpDraw.draw_landmarks(images, handLms, mpHands.HAND_CONNECTIONS)
+                    images = cv2.putText(
+                        images, f"Right: X={axis_x} Y={axis_y:.0f} Z={axis_z}", (20, org[1]+20),
+                        font, fontScale, color, thickness, cv2.LINE_AA
+                    )
+                    for idx, (name, angle) in enumerate(angles):
+                        images = cv2.putText(
+                            images, f"{name}: {angle:.1f} deg" if angle is not None else f"{name}: N/A",
+                            (20, org[1]+40+idx*20), font, fontScale, color, thickness, cv2.LINE_AA
+                        )
+                    # Display tip distances
+                    for idx, (name, dist) in enumerate(tip_distances):
+                        images = cv2.putText(
+                            images, f"{name} Tip Dist: {dist} px",
+                            (20, org[1]+130+idx*20), font, fontScale, color, thickness, cv2.LINE_AA
+                        )
                         for tip, name in zip(finger_tips, finger_names):
                             finger_vec = np.array([tip.x, tip.y, tip.z])
                             v1 = thumb_vec
@@ -217,12 +344,15 @@ class SO101FollowerEndEffector(SO101Follower):
                                 angles.append((name, angle_deg))
                             else:
                                 angles.append((name, None))
-                        middle_knuckle = handLms.landmark[9]
-                        hand_3d = get_3d_point(middle_knuckle, depth_image_flipped, width, height, depth_scale)
-                        cam_center = np.array([width // 2, height // 2, depth_image_flipped[height // 2, width // 2] * depth_scale])
-                        axis_x = hand_3d[0] - cam_center[0]
-                        axis_y = (hand_3d[2] / depth_scale) - (cam_center[2] / depth_scale)
-                        axis_z = hand_3d[1] - cam_center[1]
+                                
+                        middle_finger_distance = None
+                        for name, dist in tip_distances:
+                            if name == "Middle":
+                                middle_finger_distance = dist
+                                break
+                        gripper_angle = angles[0][1] if angles and angles[0][1] is not None else None
+                        right_hand_wrist_roll = wrist_angle_deg
+                        right_hand_array = [middle_finger_distance, gripper_angle, right_hand_wrist_roll]
                         action["gripper"] = angles[0][1] if angles and angles[0][1] is not None else 0.0
                         
                     if hand_label== "Left":
@@ -235,10 +365,10 @@ class SO101FollowerEndEffector(SO101Follower):
                         # Angle between v1 and horizontal axis (x axis)
                         angle_rad = np.arctan2(v1[1], v1[0])
                         angle_deg = np.degrees(angle_rad)
-                        action["wrist_roll"] =  angle_deg
+                        # action["wrist_roll"] =  angle_deg
                         
                     with self._hand_action_lock:
-                        self._hand_action = action
+                        self._hand_action = right_hand_array
             # Optionally show the window for debug
             cv2.imshow("Hand Tracking", images)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -288,31 +418,54 @@ class SO101FollowerEndEffector(SO101Follower):
             shadow_action = self.get_hand_action()
             print("Hand action received:", shadow_action)
             
-            
             # Optionally: update current_joint_pos and current_ee_pos
             self.current_joint_pos = np.array([action[k] for k in joint_keys])
             self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos, frame=EE_FRAME)
-            if shadow_action:
-                gripper_angle = shadow_action["gripper"]
-                min_angle_1 = 5.0   
-                max_angle_1 = 20.0  
-                gripper_min_1 = 5  
-                gripper_max_1 = 70  
-                gripper_angle = np.clip(gripper_angle, min_angle_1, max_angle_1)
-                gripper_mapped = gripper_min_1 + (gripper_angle - min_angle_1) * (gripper_max_1 - gripper_min_1) / (max_angle_1 - min_angle_1)
-                gripper_mapped = np.clip(gripper_mapped, gripper_min_1, gripper_max_1)
-                action['gripper.pos'] = gripper_mapped
-                print("Action after changing")
-                print(action)
-                min_angle = -140.0  
-                max_angle = -10.0  
-                gripper_min = 10  
-                gripper_max = 90 
-                wrist_roll_angle = shadow_action["wrist_roll"]
-                wrist_roll_angle = np.clip(wrist_roll_angle, min_angle, max_angle)
-                wrist_roll_mapped = gripper_min + abs(wrist_roll_angle - min_angle) * (gripper_max - gripper_min) / (max_angle - min_angle)
-                wrist_roll_mapped = np.clip(wrist_roll_mapped, gripper_min, gripper_max)
-                action['wrist_roll.pos'] = wrist_roll_angle
+            if shadow_action is not None:
+                # Unpack values     
+                hand_distance_px = shadow_action[0]  # middle finger tip distance from camera (in px)
+                gripper_angle = shadow_action[1]
+                wrist_roll = shadow_action[2]
+
+                # Convert pixel distance to mm using RealSense depth scale
+                # If you have depth_scale in meters/pixel, multiply by 1000 for mm
+                # Example: depth_scale = 0.001 (1mm per unit)
+                depth_scale = 0.001  # <-- Set this to your actual RealSense depth_scale
+                hand_distance_mm = hand_distance_px * depth_scale * 1000  # Convert to mm
+
+                camera_to_ee_offset = 100  
+                threshold = 50  
+
+                if self.current_ee_pos is not None:
+                    current_ee_z = self.current_ee_pos[2, 3]
+                else:
+                    current_ee_z = camera_to_ee_offset
+
+                desired_ee_z = hand_distance_mm - threshold
+
+                desired_ee_pos = self.current_ee_pos.copy() if self.current_ee_pos is not None else np.eye(4)
+                desired_ee_pos[2, 3] = desired_ee_z
+
+                target_joint_values_in_degrees = self.kinematics.ik(
+                    self.current_joint_pos, desired_ee_pos, position_only=True, frame=EE_FRAME
+                )
+                target_joint_values_in_degrees = np.clip(target_joint_values_in_degrees, -180.0, 180.0)
+
+                joint_action = {
+                    f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
+                }
+                joint_action["gripper.pos"] = np.clip(
+                    self.current_joint_pos[-1] + (gripper_angle - 1) * self.config.max_gripper_pos,
+                    5,
+                    self.config.max_gripper_pos,
+                )
+
+                self.current_ee_pos = desired_ee_pos.copy()
+                self.current_joint_pos = target_joint_values_in_degrees.copy()
+                self.current_joint_pos[-1] = joint_action["gripper.pos"]
+
+                return super().send_action(joint_action)
+            
             return super().send_action(action)
         
         pid_flag = True
