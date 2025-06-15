@@ -818,8 +818,7 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
         # Convert string dimensions to integers
-        c, h, w = [int(x) for x in expected_shape]
-        
+        h, w, c = [int(x) for x in expected_shape]
         # Check if dimensions are valid (either original or cropped)
         valid_shapes = [
             (c, h, w),  # original channel-first

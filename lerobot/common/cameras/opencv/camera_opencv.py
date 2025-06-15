@@ -371,6 +371,7 @@ class OpenCVCamera(Camera):
             x, y, crop_w, crop_h = self.config.crop_region
             if x + crop_w <= w and y + crop_h <= h:
                 image = image[y:y+crop_h, x:x+crop_w]
+                # image = image[y+crop_h:, x+crop_w:]
                 # Update dimensions to match cropped size
                 self.width = crop_w
                 self.height = crop_h
