@@ -125,8 +125,14 @@ class OpenCVCamera(Camera):
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
+            # If crop region is specified, update the output dimensions
+            if self.config.crop_region is not None:
+                _, _, crop_w, crop_h = self.config.crop_region
+                self.width, self.height = crop_w, crop_h
+            # Handle rotation after cropping
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.capture_width, self.capture_height = self.height, self.width
+                self.width, self.height = self.height, self.width
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.index_or_path})"
@@ -360,15 +366,14 @@ class OpenCVCamera(Camera):
         if c != 3:
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
         
-        # Store original dimensions before processing
-        self.width = w
-        self.height = h
-
         # Apply cropping if configured
         if self.config.crop_region is not None:
             x, y, crop_w, crop_h = self.config.crop_region
             if x + crop_w <= w and y + crop_h <= h:
                 image = image[y:y+crop_h, x:x+crop_w]
+                # Update dimensions to match cropped size
+                self.width = crop_w
+                self.height = crop_h
             else:
                 raise RuntimeError(
                     f"Crop region {self.config.crop_region} exceeds image dimensions {(h, w)}"
