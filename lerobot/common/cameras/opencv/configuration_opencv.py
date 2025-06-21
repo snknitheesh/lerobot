@@ -14,6 +14,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Tuple
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
@@ -46,6 +47,7 @@ class OpenCVCameraConfig(CameraConfig):
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
+        crop_region: Optional tuple of (x, y, w, h) for cropping the frame. Defaults to None.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -55,6 +57,7 @@ class OpenCVCameraConfig(CameraConfig):
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    crop_region: Optional[Tuple[int, int, int, int]] = None
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
@@ -71,3 +74,10 @@ class OpenCVCameraConfig(CameraConfig):
             raise ValueError(
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
             )
+        
+        if self.crop_region is not None:
+            x, y, w, h = self.crop_region
+            if not all(isinstance(v, int) for v in (x, y, w, h)):
+                raise ValueError("All crop_region values must be integers")
+            if x < 0 or y < 0 or w <= 0 or h <= 0:
+                raise ValueError("Invalid crop_region values")

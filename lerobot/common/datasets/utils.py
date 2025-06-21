@@ -817,13 +817,28 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
     error_message = ""
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
-        c, h, w = expected_shape
-        if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
-            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
+        # Convert string dimensions to integers
+        h, w, c = [int(x) for x in expected_shape]
+        # Check if dimensions are valid (either original or cropped)
+        valid_shapes = [
+            (c, h, w),  # original channel-first
+            (h, w, c),  # original channel-last
+            (c, h, w//2),  # cropped channel-first
+            (h, w//2, c),  # cropped channel-last
+        ]
+        
+        if len(actual_shape) != 3 or actual_shape not in valid_shapes:
+            error_message += (
+                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape. "
+                f"Valid shapes are {valid_shapes}.\n"
+            )
     elif isinstance(value, PILImage.Image):
         pass
     else:
-        error_message += f"The feature '{name}' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '{type(value)}' provided instead.\n"
+        error_message += (
+            f"The feature '{name}' is expected to be of type 'PIL.Image' or 'np.ndarray' "
+            f"channel first or channel last, but type '{type(value)}' provided instead.\n"
+        )
 
     return error_message
 
